@@ -278,6 +278,43 @@ def test_resolve_path_source_roots_apply_apex_package_priority() -> None:
     ) == (second, False, False)
 
 
+def test_resolve_path_falls_back_when_no_source_root_matches() -> None:
+    repo_keys = {"src/Foo.cls"}
+    assert _resolve_path(
+        "Foo.cls",
+        repo_keys,
+        _build_suffix_index(repo_keys),
+        strip_prefix=None,
+        path_prefix=None,
+        source_roots=("missing/package",),
+    ) == ("src/Foo.cls", False, False)
+
+
+def test_resolve_path_uses_matching_file_under_origin_dir() -> None:
+    repo_keys = {"packages/app/classes/Dup.cls", "packages/other/classes/Dup.cls"}
+    assert _resolve_path(
+        "Dup.cls",
+        repo_keys,
+        _build_suffix_index(repo_keys),
+        strip_prefix=None,
+        path_prefix=None,
+        origin_dir="packages/app/classes",
+    ) == ("packages/app/classes/Dup.cls", False, True)
+
+
+def test_resolve_path_keeps_multiple_source_root_matches_ambiguous() -> None:
+    repo_keys = {"pkg-one/classes/Dup.cls", "pkg-two/classes/Dup.cls"}
+    assert _resolve_path(
+        "Dup.cls",
+        repo_keys,
+        _build_suffix_index(repo_keys),
+        strip_prefix=None,
+        path_prefix=None,
+        source_roots=("pkg-one/classes", "pkg-two/classes"),
+        apex_package_dirs=("pkg-two", "pkg-one"),
+    ) == (None, True, False)
+
+
 def test_match_key_respects_package_directory_boundaries() -> None:
     repo_keys = {"force-app/classes/Dup.cls", "force-app-extra/classes/Dup.cls"}
     assert _match_key(
