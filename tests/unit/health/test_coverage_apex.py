@@ -17,7 +17,11 @@ from repowise.core.analysis.health.coverage import (
     resolve_reports,
     resolve_test_reports,
 )
-from repowise.core.analysis.health.coverage.discovery import _merge_into
+from repowise.core.analysis.health.coverage.discovery import (
+    _build_suffix_index,
+    _match_key,
+    _merge_into,
+)
 from repowise.core.analysis.health.coverage.model import (
     CoverageReport,
     FileCoverage,
@@ -216,6 +220,41 @@ def test_resolution_refuses(raw: str, ambiguous: bool) -> None:
     res = resolve_reports([_report(raw)], KEYS)
     assert res.coverage_map == {}
     assert (res.ambiguous if ambiguous else res.unmatched) == [raw]
+
+
+def test_match_key_prefers_first_matching_apex_package() -> None:
+    repo_keys = {"preferred/classes/Dup.cls", "other/classes/Dup.cls"}
+    assert _match_key(
+        "Dup.cls",
+        repo_keys,
+        _build_suffix_index(repo_keys),
+        apex_package_dirs=("preferred", "other"),
+    ) == ("preferred/classes/Dup.cls", False)
+
+
+def test_match_key_keeps_ambiguity_in_first_matching_apex_package() -> None:
+    repo_keys = {"preferred/classes/Dup.cls", "preferred/extra/Dup.cls", "later/classes/Dup.cls"}
+    assert _match_key(
+        "Dup.cls",
+        repo_keys,
+        _build_suffix_index(repo_keys),
+        apex_package_dirs=("preferred", "later"),
+    ) == (None, True)
+
+
+def test_match_key_uses_later_apex_package_when_earlier_packages_have_no_hit() -> None:
+    repo_keys = {"later/classes/Dup.cls", "other/classes/Dup.cls"}
+    assert _match_key(
+        "Dup.cls",
+        repo_keys,
+        _build_suffix_index(repo_keys),
+        apex_package_dirs=("earlier", "later", "other"),
+    ) == ("later/classes/Dup.cls", False)
+
+
+def test_match_key_without_apex_package_dirs_keeps_duplicate_ambiguity() -> None:
+    repo_keys = {"preferred/classes/Dup.cls", "other/classes/Dup.cls"}
+    assert _match_key("Dup.cls", repo_keys, _build_suffix_index(repo_keys)) == (None, True)
 
 
 def _build_duplicate(tmp_path: Path, manifest: str | None, keys: set[str]):
