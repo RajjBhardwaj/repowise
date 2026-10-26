@@ -290,6 +290,24 @@ def test_resolve_path_falls_back_when_no_source_root_matches() -> None:
     ) == ("src/Foo.cls", False, False)
 
 
+def test_resolve_path_fallback_uses_apex_package_priority_without_source_root_match() -> None:
+    first = "pkg-one/classes/Dup.cls"
+    preferred = "pkg-two/classes/Dup.cls"
+    repo_keys = {first, preferred}
+
+    # The joined path has too little directory overlap to match either file;
+    # only the final bare-name fallback can apply the package preference.
+    assert _resolve_path(
+        "Dup.cls",
+        repo_keys,
+        {"dup.cls": [first, preferred]},
+        strip_prefix=None,
+        path_prefix=None,
+        source_roots=("missing/package/deeper",),
+        apex_package_dirs=("pkg-two", "pkg-one"),
+    ) == ("pkg-two/classes/Dup.cls", False, False)
+
+
 def test_resolve_path_uses_matching_file_under_origin_dir() -> None:
     repo_keys = {"packages/app/classes/Dup.cls", "packages/other/classes/Dup.cls"}
     assert _resolve_path(
