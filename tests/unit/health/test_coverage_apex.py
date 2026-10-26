@@ -218,6 +218,69 @@ def test_resolution_refuses(raw: str, ambiguous: bool) -> None:
     assert (res.ambiguous if ambiguous else res.unmatched) == [raw]
 
 
+def _build_duplicate(tmp_path: Path, manifest: str | None, keys: set[str]):
+    if manifest is not None:
+        (tmp_path / "sfdx-project.json").write_text(manifest, encoding="utf-8")
+    report_path = tmp_path / "apex.json"
+    report_path.write_text(
+        '[{"id":"01p000000000001AAA","name":"Dup","totalLines":1,'
+        '"lines":{"1":1},"totalCovered":1,"coveredPercent":100}]',
+        encoding="utf-8",
+    )
+    return build_coverage_map(tmp_path, [report_path], keys, allow_partial=True)
+
+
+def test_build_coverage_map_prefers_default_salesforce_package(tmp_path: Path) -> None:
+    keys = {"first/classes/Dup.cls", "default/classes/Dup.cls"}
+    manifest = '{"packageDirectories":[{"path":"first"},{"path":"default","default":true}]}'
+    resolved, errors = _build_duplicate(tmp_path, manifest, keys)
+    assert errors == []
+    assert list(resolved.coverage_map) == ["default/classes/Dup.cls"]
+
+
+def test_build_coverage_map_uses_package_declaration_order_without_default(tmp_path: Path) -> None:
+    keys = {"second/classes/Dup.cls", "first/classes/Dup.cls"}
+    manifest = '{"packageDirectories":[{"path":"first"},{"path":"second"}]}'
+    resolved, errors = _build_duplicate(tmp_path, manifest, keys)
+    assert errors == []
+    assert list(resolved.coverage_map) == ["first/classes/Dup.cls"]
+
+
+@pytest.mark.parametrize("manifest", [None, "not json", "{}"])
+def test_build_coverage_map_keeps_duplicates_ambiguous_without_usable_manifest(
+    tmp_path: Path, manifest: str | None
+) -> None:
+    resolved, errors = _build_duplicate(
+        tmp_path, manifest, {"first/classes/Dup.cls", "second/classes/Dup.cls"}
+    )
+    assert errors == []
+    assert resolved.coverage_map == {}
+    assert resolved.ambiguous == ["Dup.cls"]
+
+
+def test_build_coverage_map_keeps_same_package_duplicates_ambiguous(tmp_path: Path) -> None:
+    keys = {"preferred/classes/Dup.cls", "preferred/other/Dup.cls", "later/classes/Dup.cls"}
+    manifest = '{"packageDirectories":[{"path":"preferred","default":true},{"path":"later"}]}'
+    resolved, errors = _build_duplicate(tmp_path, manifest, keys)
+    assert errors == []
+    assert resolved.coverage_map == {}
+    assert resolved.ambiguous == ["Dup.cls"]
+
+
+def test_package_preference_preserves_unique_and_non_apex_matching(tmp_path: Path) -> None:
+    keys = {"preferred/classes/Only.cls", "other/Makefile"}
+    manifest = '{"packageDirectories":[{"path":"preferred","default":true}]}'
+    (tmp_path / "sfdx-project.json").write_text(manifest, encoding="utf-8")
+    report_path = tmp_path / "coverage.info"
+    report_path.write_text(
+        "SF:Only.cls\nDA:1,1\nend_of_record\nSF:Makefile\nDA:1,1\nend_of_record\n",
+        encoding="utf-8",
+    )
+    resolved, errors = build_coverage_map(tmp_path, [report_path], keys, allow_partial=True)
+    assert errors == []
+    assert set(resolved.coverage_map) == keys
+
+
 def test_per_test_records_resolve_source_and_test_file() -> None:
     res = resolve_test_reports(parse_apex_contexts(_read("sample.apex.json")), KEYS)
     test_file = "force-app/main/default/classes/Trigger Recipes/AccountTriggerHandler_Tests.cls"

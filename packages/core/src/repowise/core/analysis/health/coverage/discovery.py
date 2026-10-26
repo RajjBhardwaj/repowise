@@ -23,6 +23,7 @@ Two jobs that make ingested coverage *actually line up* with the repo:
 
 from __future__ import annotations
 
+import json
 import time
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -767,6 +768,7 @@ def _match_key(
     suffix_index: dict[str, list[str]],
     *,
     prefer_dir: str | None = None,
+    apex_package_dirs: Sequence[str] = (),
 ) -> tuple[str | None, bool]:
     """Resolve a normalized report path to a canonical key.
 
@@ -786,9 +788,14 @@ def _match_key(
     if norm_path in repo_keys:
         return norm_path, False
 
-    # An Apex name is unique in an org, so two files of that name are copies: refuse.
+    # Apex basenames can be duplicated across Salesforce packages. The project
+    # manifest can disambiguate them by package directory priority.
     hits = [k for name in _apex_names(norm_path) for k in suffix_index.get(name, ())]
     if hits:
+        for package_dir in apex_package_dirs:
+            in_package = [k for k in hits if k.startswith(package_dir.rstrip("/") + "/")]
+            if in_package:
+                return (in_package[0], False) if len(in_package) == 1 else (None, True)
         return (hits[0], False) if len(hits) == 1 else (None, True)
 
     base = norm_path.rsplit("/", 1)[-1]
@@ -869,6 +876,7 @@ def _resolve_path(
     origin_dir: str | None = None,
     source_roots: Sequence[str] = (),
     go_modules: Sequence[tuple[str, str]] = (),
+    apex_package_dirs: Sequence[str] = (),
 ) -> tuple[str | None, bool, bool]:
     """``(key, ambiguous, exact)`` for one report path, aggregate or per-test.
 
@@ -902,7 +910,13 @@ def _resolve_path(
             joined = normalize_report_path(
                 f"{root.rstrip('/')}/{raw}", strip_prefix=strip_prefix, path_prefix=path_prefix
             )
-            key, _ = _match_key(joined, repo_keys, suffix_index, prefer_dir=origin)
+            key, _ = _match_key(
+                joined,
+                repo_keys,
+                suffix_index,
+                prefer_dir=origin,
+                apex_package_dirs=apex_package_dirs,
+            )
             if key is not None:
                 found[key] = found.get(key, False) or key in (joined, norm)
         if found:
@@ -911,7 +925,9 @@ def _resolve_path(
         key = _under_origin(norm, origin, repo_keys)
         if key is not None:
             return key, False, True
-    key, ambiguous = _match_key(norm, repo_keys, suffix_index, prefer_dir=origin)
+    key, ambiguous = _match_key(
+        norm, repo_keys, suffix_index, prefer_dir=origin, apex_package_dirs=apex_package_dirs
+    )
     return key, ambiguous, key is not None and norm == key
 
 
@@ -1055,6 +1071,7 @@ def resolve_reports(
     path_prefix: str | None = None,
     ignore: Sequence[str] = (),
     go_modules: Sequence[tuple[str, str]] = (),
+    apex_package_dirs: Sequence[str] = (),
 ) -> ResolvedCoverage:
     """Resolve one or more parsed reports against the indexed tree.
 
@@ -1091,6 +1108,7 @@ def resolve_reports(
                 origin_dir=report.origin_dir,
                 source_roots=report.source_roots,
                 go_modules=modules,
+                apex_package_dirs=apex_package_dirs,
             )
             # An entry that resolves is ignored by its key; one that does not,
             # by the path the report wrote.
@@ -1366,6 +1384,7 @@ def build_coverage_map(
         strip_prefix=strip_prefix,
         path_prefix=path_prefix,
         ignore=ignore,
+        apex_package_dirs=_salesforce_package_dirs(repo_root),
         # The walk only when a coverprofile needs it.
         go_modules=(
             _go_modules(repo_root)
@@ -1380,6 +1399,35 @@ def build_coverage_map(
     # withheld mapping contributed no rows at all, so it reports no time.
     resolved.measured_at = None if resolved.withheld else oldest_report_time(parsed_paths)
     return resolved, errors
+
+
+def _salesforce_package_dirs(repo_root: Path) -> tuple[str, ...]:
+    """Package directory priority from ``sfdx-project.json``, if usable."""
+    try:
+        manifest = json.loads((repo_root / "sfdx-project.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ()
+    directories = manifest.get("packageDirectories") if isinstance(manifest, dict) else None
+    if not isinstance(directories, list):
+        return ()
+    usable = [
+        entry["path"].strip().strip("/")
+        for entry in directories
+        if isinstance(entry, dict)
+        and isinstance(entry.get("path"), str)
+        and entry["path"].strip().strip("/")
+    ]
+    if not usable:
+        return ()
+    defaults = [
+        entry["path"].strip().strip("/")
+        for entry in directories
+        if isinstance(entry, dict)
+        and entry.get("default") is True
+        and isinstance(entry.get("path"), str)
+        and entry["path"].strip().strip("/")
+    ]
+    return tuple(defaults + [path for path in usable if path not in defaults])
 
 
 def oldest_report_time(paths: Iterable[Path]) -> datetime | None:
