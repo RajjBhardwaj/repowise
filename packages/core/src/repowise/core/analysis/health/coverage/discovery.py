@@ -762,6 +762,15 @@ def _apex_names(norm_path: str) -> tuple[str, ...]:
     return tuple(name + ext for ext in _APEX_EXTS)
 
 
+def _match_apex_package(hits: Sequence[str], package_dirs: Sequence[str]) -> tuple[str | None, bool]:
+    """Select a unique Apex hit from the first package directory with matches."""
+    for package_dir in package_dirs:
+        in_package = [key for key in hits if key.startswith(package_dir.rstrip("/") + "/")]
+        if in_package:
+            return (in_package[0], False) if len(in_package) == 1 else (None, True)
+    return (hits[0], False) if len(hits) == 1 else (None, bool(hits))
+
+
 def _match_key(
     norm_path: str,
     repo_keys: set[str],
@@ -792,11 +801,7 @@ def _match_key(
     # manifest can disambiguate them by package directory priority.
     hits = [k for name in _apex_names(norm_path) for k in suffix_index.get(name, ())]
     if hits:
-        for package_dir in apex_package_dirs:
-            in_package = [k for k in hits if k.startswith(package_dir.rstrip("/") + "/")]
-            if in_package:
-                return (in_package[0], False) if len(in_package) == 1 else (None, True)
-        return (hits[0], False) if len(hits) == 1 else (None, True)
+        return _match_apex_package(hits, apex_package_dirs)
 
     base = norm_path.rsplit("/", 1)[-1]
     candidates = suffix_index.get(_index_name(base))
@@ -1410,24 +1415,19 @@ def _salesforce_package_dirs(repo_root: Path) -> tuple[str, ...]:
     directories = manifest.get("packageDirectories") if isinstance(manifest, dict) else None
     if not isinstance(directories, list):
         return ()
-    usable = [
-        entry["path"].strip().strip("/")
-        for entry in directories
-        if isinstance(entry, dict)
-        and isinstance(entry.get("path"), str)
-        and entry["path"].strip().strip("/")
-    ]
-    if not usable:
-        return ()
-    defaults = [
-        entry["path"].strip().strip("/")
-        for entry in directories
-        if isinstance(entry, dict)
-        and entry.get("default") is True
-        and isinstance(entry.get("path"), str)
-        and entry["path"].strip().strip("/")
-    ]
-    return tuple(defaults + [path for path in usable if path not in defaults])
+    prepared: list[tuple[str, bool]] = []
+    for entry in directories:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            continue
+        path = entry["path"].strip().strip("/")
+        if path:
+            prepared.append((path, entry.get("default") is True))
+    defaults = tuple(path for path, default in prepared if default)
+    default_paths = set(defaults)
+    remaining = tuple(
+        path for path, default in prepared if not default and path not in default_paths
+    )
+    return defaults + remaining
 
 
 def oldest_report_time(paths: Iterable[Path]) -> datetime | None:

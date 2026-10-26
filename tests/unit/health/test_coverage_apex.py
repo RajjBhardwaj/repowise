@@ -21,6 +21,7 @@ from repowise.core.analysis.health.coverage.discovery import (
     _build_suffix_index,
     _match_key,
     _merge_into,
+    _salesforce_package_dirs,
 )
 from repowise.core.analysis.health.coverage.model import (
     CoverageReport,
@@ -255,6 +256,40 @@ def test_match_key_uses_later_apex_package_when_earlier_packages_have_no_hit() -
 def test_match_key_without_apex_package_dirs_keeps_duplicate_ambiguity() -> None:
     repo_keys = {"preferred/classes/Dup.cls", "other/classes/Dup.cls"}
     assert _match_key("Dup.cls", repo_keys, _build_suffix_index(repo_keys)) == (None, True)
+
+
+def test_match_key_respects_package_directory_boundaries() -> None:
+    repo_keys = {"force-app/classes/Dup.cls", "force-app-extra/classes/Dup.cls"}
+    assert _match_key(
+        "Dup.cls",
+        repo_keys,
+        _build_suffix_index(repo_keys),
+        apex_package_dirs=("force-app", "force-app-extra"),
+    ) == ("force-app/classes/Dup.cls", False)
+
+
+def test_salesforce_package_dirs_preserves_order_and_filters_duplicate_defaults(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "sfdx-project.json").write_text(
+        '{"packageDirectories":[ '
+        '{"path":" /default/ ","default":true},'
+        '{"path":"/default/"},'
+        '{"path":"later"},'
+        '{"path":"later"},'
+        '{"path":"  /later/ "},'
+        '{"path":"default-two","default":true},'
+        'null,{"default":true},{"path":12},{"path":" / "}'
+        ']}',
+        encoding="utf-8",
+    )
+    assert _salesforce_package_dirs(tmp_path) == (
+        "default",
+        "default-two",
+        "later",
+        "later",
+        "later",
+    )
 
 
 def _build_duplicate(tmp_path: Path, manifest: str | None, keys: set[str]):
