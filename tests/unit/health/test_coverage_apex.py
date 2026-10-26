@@ -21,6 +21,7 @@ from repowise.core.analysis.health.coverage.discovery import (
     _build_suffix_index,
     _match_key,
     _merge_into,
+    _resolve_path,
     _salesforce_package_dirs,
 )
 from repowise.core.analysis.health.coverage.model import (
@@ -256,6 +257,25 @@ def test_match_key_uses_later_apex_package_when_earlier_packages_have_no_hit() -
 def test_match_key_without_apex_package_dirs_keeps_duplicate_ambiguity() -> None:
     repo_keys = {"preferred/classes/Dup.cls", "other/classes/Dup.cls"}
     assert _match_key("Dup.cls", repo_keys, _build_suffix_index(repo_keys)) == (None, True)
+
+
+def test_resolve_path_source_roots_apply_apex_package_priority() -> None:
+    first = "pkg-one/classes/Dup.cls"
+    second = "pkg-two/classes/Dup.cls"
+    repo_keys = {first, second}
+    # Keep the index order fixed: without package priority, the source-root
+    # match would select `first` before the second root is considered.
+    suffix_index = {"dup.cls": [first, second]}
+
+    assert _resolve_path(
+        "Dup.cls",
+        repo_keys,
+        suffix_index,
+        strip_prefix=None,
+        path_prefix=None,
+        source_roots=("missing", "/"),
+        apex_package_dirs=("pkg-two", "pkg-one"),
+    ) == (second, False, False)
 
 
 def test_match_key_respects_package_directory_boundaries() -> None:

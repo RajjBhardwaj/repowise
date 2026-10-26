@@ -909,19 +909,23 @@ def _resolve_path(
     norm = normalize_report_path(raw, strip_prefix=strip_prefix, path_prefix=path_prefix)
     origin = origin_dir
     relative = not _is_absolute(raw)
+
+    def match_path(path: str) -> tuple[str | None, bool]:
+        return _match_key(
+            path,
+            repo_keys,
+            suffix_index,
+            prefer_dir=origin,
+            apex_package_dirs=apex_package_dirs,
+        )
+
     if relative and source_roots:
         found: dict[str, bool] = {}  # key -> matched a path exactly
         for root in source_roots:
             joined = normalize_report_path(
                 f"{root.rstrip('/')}/{raw}", strip_prefix=strip_prefix, path_prefix=path_prefix
             )
-            key, _ = _match_key(
-                joined,
-                repo_keys,
-                suffix_index,
-                prefer_dir=origin,
-                apex_package_dirs=apex_package_dirs,
-            )
+            key, _ = match_path(joined)
             if key is not None:
                 found[key] = found.get(key, False) or key in (joined, norm)
         if found:
@@ -930,9 +934,7 @@ def _resolve_path(
         key = _under_origin(norm, origin, repo_keys)
         if key is not None:
             return key, False, True
-    key, ambiguous = _match_key(
-        norm, repo_keys, suffix_index, prefer_dir=origin, apex_package_dirs=apex_package_dirs
-    )
+    key, ambiguous = match_path(norm)
     return key, ambiguous, key is not None and norm == key
 
 
